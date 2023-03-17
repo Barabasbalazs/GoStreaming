@@ -1,19 +1,15 @@
 package main
 
 import (
-	"context"
 	"log"
-	"os"
-	"io"
 	"time"
-	"errors"
-	"bufio"
+	"os"
+	"fmt"
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"io/ioutil"
-	"strings"
 
 	"github.com/gorilla/mux"
 	"net/http"
@@ -22,6 +18,8 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media/ivfreader"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
+	"github.com/pion/ice/v2"
+	"github.com/pion/randutil"
 )
 
 type offerJson struct {
@@ -30,7 +28,7 @@ type offerJson struct {
 
 const videoFileName = "output.ivf"
 const compress = false
-var peerConnection *webrtc.PeerConnection
+var api *webrtc.API 
 
 // Encode encodes the input in base64
 // It can optionally zip the input before encoding
@@ -101,140 +99,49 @@ func unzip(in []byte) []byte {
 	return res
 }
 
-// need to replace  this function in order to send back necessary data
-func mustReadStdin() string {
-	r := bufio.NewReader(os.Stdin)
-
-	var in string
-	for {
-		var err error
-		in, err = r.ReadString('\n')
-		if err != io.EOF {
-			if err != nil {
-				panic(err)
-			}
-		}
-		in = strings.TrimSpace(in)
-		if len(in) > 0 {
-			break
-		}
-	}
-
-	log.Println(" ")
-
-	return in
-}
-
-//  Create a new RTCPeerConnection
-func getConnectionConfig() error {
-	var err error
-	peerConnection, err = webrtc.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
-			},
-		},
-	})
-	return err
-}
-
 func readRTCP(rtpSender *webrtc.RTPSender) {
 	rtcpBuf := make([]byte, 1500)
 	for {
+		// problem here!!!!
 		if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
 			return
 		}
 	}
 }
 
-func setupWebRTC() {
-	err := getConnectionConfig()
+func writeVideoToTrack(t *webrtc.TrackLocalStaticSample) {
+	// Open a IVF file and start reading using our IVFReader
+	file, err := os.Open(videoFileName)
 	if err != nil {
 		panic(err)
 	}
 
-	// creates a context for the proper ICE connection
-	iceConnectedCtx, iceConnectedCtxCancel := context.WithCancel(context.Background())
-
-	// Create a video track
-	videoTrack, videoTrackErr := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
-	if videoTrackErr != nil {
-		panic(videoTrackErr)
+	ivf, header, err := ivfreader.NewWith(file)
+	if err != nil {
+		panic(err)
 	}
+	// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
+	// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
+	//
+	// It is important to use a time.Ticker instead of time.Sleep because
+	// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
+	// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
+	ticker := time.NewTicker(time.Millisecond * time.Duration((float32(header.TimebaseNumerator)/float32(header.TimebaseDenominator))*1000))
+	for ; true; <-ticker.C {
+		frame, _, err := ivf.ParseNextFrame()
+		if err != nil {
+			fmt.Printf("Finish writing video track: %s ", err)
+			return
+		}
 
-	rtpSender, videoTrackErr := peerConnection.AddTrack(videoTrack)
-	
-	if videoTrackErr != nil {
-		panic(videoTrackErr)
+		if err = t.WriteSample(media.Sample{Data: frame, Duration: time.Second}); err != nil {
+			fmt.Printf("Finish writing video track: %s ", err)
+			return
+		}
 	}
-
-	// go routine for reading incoming RTCP packets
-	go readRTCP(rtpSender)
-
-	go func () {
-		// Open a IVF file and start reading using our IVFReader
-		file, ivfErr := os.Open(videoFileName)
-		if ivfErr != nil {
-			panic(ivfErr)
-		}
-	
-		ivf, header, ivfErr := ivfreader.NewWith(file)
-		if ivfErr != nil {
-			panic(ivfErr)
-		}
-	
-		// Wait for connection established
-		<-iceConnectedCtx.Done()
-	
-		// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
-		// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
-		//
-		// It is important to use a time.Ticker instead of time.Sleep because
-		// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
-		// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
-		ticker := time.NewTicker(time.Millisecond * time.Duration((float32(header.TimebaseNumerator)/float32(header.TimebaseDenominator))*1000))
-		for ; true; <-ticker.C {
-			frame, _, ivfErr := ivf.ParseNextFrame()
-			if errors.Is(ivfErr, io.EOF) {
-				log.Printf("All video frames parsed and sent")
-				os.Exit(0)
-			}
-	
-			if ivfErr != nil {
-				panic(ivfErr)
-			}
-	
-			if ivfErr = videoTrack.WriteSample(media.Sample{Data: frame, Duration: time.Second}); ivfErr != nil {
-				panic(ivfErr)
-			}
-		}
-	} ()
-
-	// Set the handler for ICE connection state
-	// This will notify you when the peer has connected/disconnected
-	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		log.Printf("Connection State has changed %s \n", connectionState.String())
-		if connectionState == webrtc.ICEConnectionStateConnected {
-			iceConnectedCtxCancel()
-		}
-	})
-
-	// Set the handler for Peer connection state
-	// This will notify you when the peer has connected/disconnected
-	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		log.Printf("Peer Connection State has changed: %s\n", s.String())
-
-		if s == webrtc.PeerConnectionStateFailed {
-			// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-			// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-			// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-			log.Println("Peer Connection has gone to failed exiting")
-			os.Exit(0)
-		}
-	})
 }
 
-func streamHandler (response http.ResponseWriter, request *http.Request) {
+func doSignaling (response http.ResponseWriter, request *http.Request) {
 
 	log.Println("GET stream")
 
@@ -247,6 +154,37 @@ func streamHandler (response http.ResponseWriter, request *http.Request) {
         http.Error(response, err.Error(), http.StatusBadRequest)
         return
     }
+
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	})
+		if err != nil {
+			panic(err)
+	}
+
+	videoTrack, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+		fmt.Sprintf("video-%d", randutil.NewMathRandomGenerator().Uint32()),
+		fmt.Sprintf("video-%d", randutil.NewMathRandomGenerator().Uint32()),
+	)
+
+	if err != nil {
+		log.Println("Videotrack error")
+		panic(err)
+	}
+
+	rtpSender, err := peerConnection.AddTrack(videoTrack)
+		if err != nil {
+			panic(err)
+	}
+
+	go readRTCP(rtpSender)
+
+	go writeVideoToTrack(videoTrack)
 
 	// get the offer from the request body
 	offer := webrtc.SessionDescription{}
@@ -267,7 +205,7 @@ func streamHandler (response http.ResponseWriter, request *http.Request) {
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 
 	// Sets the LocalDescription, and starts our UDP listeners
-	if err = peerConnection.SetLocalDescription(answer); err != nil {
+	if err := peerConnection.SetLocalDescription(answer); err != nil {
 		panic(err)
 	}
 
@@ -293,10 +231,21 @@ func streamHandler (response http.ResponseWriter, request *http.Request) {
 }
 
 func main() {
-	setupWebRTC()
+	// setupWebRTC()
+	settingEngine := webrtc.SettingEngine{}
+
+	udpMux, err := ice.NewMultiUDPMuxFromPort(8443)
+	if err != nil {
+		panic(err)
+	}
+
+	settingEngine.SetICEUDPMux(udpMux)
+
+	api = webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+
 	router := mux.NewRouter()
 
-	router.HandleFunc("/api/stream", streamHandler).Methods(http.MethodPost)
+	router.HandleFunc("/api/stream", doSignaling).Methods(http.MethodPost)
 	
 	c := cors.New(cors.Options{
         AllowedOrigins: []string{"*"},

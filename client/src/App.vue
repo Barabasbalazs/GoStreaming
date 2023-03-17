@@ -1,7 +1,7 @@
 <template>
-  <div>
-    <button @click="createConnection">Connect to Server</button>
+  <div class="flex flex-col items-center space-y-2">
     <video :srcObject="stream" width="300" height="200" autoplay></video>
+    <button class="border border-black p-2 rounded" @click="createConnection">Connect to Server</button>
   </div>
 </template>
 
@@ -11,6 +11,7 @@ import { OfferModel } from './models/offer-model';
 import { getSd } from './utils/get-sd';
 
 const stream = ref();
+const connectionOffer = ref();
 
 const pc = new RTCPeerConnection({
   iceServers: [{
@@ -33,7 +34,8 @@ const createConnection = async () => {
       console.log('Error while fetching');
       return;
     }
-    // console.log(atob(resp.offer));
+    console.log(atob(resp.offer));
+    // connectionOffer.value = atob(resp.offer);
     pc.setRemoteDescription(JSON.parse(atob(resp.offer)));
   } catch (e) {
     console.log(e);
@@ -43,8 +45,4 @@ const createConnection = async () => {
 </script>
 
 <style scoped>
-button {
-  border: 2px;
-  border-color: black;
-}
 </style>
