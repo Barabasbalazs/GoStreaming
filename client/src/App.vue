@@ -1,17 +1,22 @@
 <template>
+  <div class="flex justify-center mb-4">
+    <button class="border border-black p-2 rounded item" @click="createConnection">Connect to Server</button>
+  </div>
   <div class="flex flex-col items-center space-y-2">
+    <h1>Video Area</h1>
     <video :srcObject="stream" width="300" height="200" autoplay></video>
-    <button class="border border-black p-2 rounded" @click="createConnection">Connect to Server</button>
+    <button class="border border-black p-2 rounded" @click="playVideo">Stream Video</button>
+  </div>
+  <div class="flex flex-col items-center space-y-2 mt-4">
+    <h1>Messsage Area</h1>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { OfferModel } from './models/offer-model';
 import { getSd } from './utils/get-sd';
 
 const stream = ref();
-const connectionOffer = ref();
 
 const pc = new RTCPeerConnection({
   iceServers: [{
@@ -35,11 +40,15 @@ const createConnection = async () => {
       return;
     }
     console.log(atob(resp.offer));
-    // connectionOffer.value = atob(resp.offer);
     pc.setRemoteDescription(JSON.parse(atob(resp.offer)));
   } catch (e) {
     console.log(e);
   }
+}
+
+// figure out how to play video only on button push
+const playVideo = async () => {
+
 }
 
 </script>
