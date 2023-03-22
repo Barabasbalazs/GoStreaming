@@ -34,9 +34,15 @@ func main() {
 
 	router := mux.NewRouter()
 
+	hub := newHub()
+	go hub.run()
+
 	router.HandleFunc("/api/stream", DoVideoSignaling).Methods(http.MethodPost)
+	router.HandleFunc("/ws", func(response http.ResponseWriter, request *http.Request) {
+		serveWs(hub, response, request)
+	})
 	// connect a client to the respective data channel
-	router.HandleFunc("/api/connectToChat", DoTextSignaling).Methods(http.MethodPost)
+	// router.HandleFunc("/api/connectToChat", DoTextSignaling).Methods(http.MethodPost)
 	// with the proper id it can listen to
 
 	c := cors.New(cors.Options{
