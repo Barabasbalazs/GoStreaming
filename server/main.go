@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/gorilla/mux"
 	"net/http"
+
+	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 
 	"github.com/pion/ice/v2"
@@ -15,7 +16,8 @@ type offerJson struct {
 
 const videoFileName = "output.ivf"
 const compress = false
-var api *webrtc.API 
+
+var api *webrtc.API
 
 func main() {
 	// setupWebRTC()
@@ -32,14 +34,23 @@ func main() {
 
 	router := mux.NewRouter()
 
-	router.HandleFunc("/api/stream", DoSignaling).Methods(http.MethodPost)
-	
-	c := cors.New(cors.Options{
-        AllowedOrigins: []string{"*"},
-        AllowCredentials: true,
-    })
+	hub := newHub()
+	go hub.run()
 
-    handler := c.Handler(router)
+	router.HandleFunc("/api/stream", DoVideoSignaling).Methods(http.MethodPost)
+	router.HandleFunc("/ws", func(response http.ResponseWriter, request *http.Request) {
+		serveWs(hub, response, request)
+	})
+	// connect a client to the respective data channel
+	// router.HandleFunc("/api/connectToChat", DoTextSignaling).Methods(http.MethodPost)
+	// with the proper id it can listen to
+
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowCredentials: true,
+	})
+
+	handler := c.Handler(router)
 
 	http.ListenAndServe(":8080", handler)
 }

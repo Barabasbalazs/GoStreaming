@@ -1,17 +1,17 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
-	"fmt"
-	"net/http"
-	"encoding/json"
 
+	"github.com/pion/randutil"
+	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 	"github.com/pion/webrtc/v3/pkg/media/ivfreader"
-	"github.com/pion/webrtc/v3"
-	"github.com/pion/randutil"
 )
 
 func readRTCP(rtpSender *webrtc.RTPSender) {
@@ -56,19 +56,19 @@ func writeVideoToTrack(t *webrtc.TrackLocalStaticSample) {
 	}
 }
 
-func DoSignaling (response http.ResponseWriter, request *http.Request) {
+func DoVideoSignaling(response http.ResponseWriter, request *http.Request) {
 
-	log.Println("GET stream")
+	log.Println("GET videoStream")
 
 	var body offerJson
 
-    // Try to decode the request body into the struct. If there is an error,
-    // respond to the client with the error message and a 400 status code.
-    err := json.NewDecoder(request.Body).Decode(&body)
-    if err != nil {
-        http.Error(response, err.Error(), http.StatusBadRequest)
-        return
-    }
+	// Try to decode the request body into the struct. If there is an error,
+	// respond to the client with the error message and a 400 status code.
+	err := json.NewDecoder(request.Body).Decode(&body)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -77,8 +77,8 @@ func DoSignaling (response http.ResponseWriter, request *http.Request) {
 			},
 		},
 	})
-		if err != nil {
-			panic(err)
+	if err != nil {
+		panic(err)
 	}
 
 	videoTrack, err := webrtc.NewTrackLocalStaticSample(
@@ -93,8 +93,8 @@ func DoSignaling (response http.ResponseWriter, request *http.Request) {
 	}
 
 	rtpSender, err := peerConnection.AddTrack(videoTrack)
-		if err != nil {
-			panic(err)
+	if err != nil {
+		panic(err)
 	}
 
 	go readRTCP(rtpSender)
@@ -104,7 +104,7 @@ func DoSignaling (response http.ResponseWriter, request *http.Request) {
 	// get the offer from the request body
 	offer := webrtc.SessionDescription{}
 	Decode(body.Offer, &offer)
-	
+
 	// Set the remote SessionDescription
 	if err := peerConnection.SetRemoteDescription(offer); err != nil {
 		panic(err)

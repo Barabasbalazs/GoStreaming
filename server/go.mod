@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/gorilla/websocket v1.5.0
 	github.com/pion/datachannel v1.5.5 // indirect
 	github.com/pion/dtls/v2 v2.2.6 // indirect
 	github.com/pion/interceptor v0.1.12 // indirect
